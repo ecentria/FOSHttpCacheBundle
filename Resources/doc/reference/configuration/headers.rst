@@ -7,7 +7,7 @@ parameters described in the ``match`` section, the headers as defined under
 checked in the order specified, where the first match wins.
 
 A global setting and a per rule ``overwrite`` option allow to overwrite the
-cache headers even if they are already set.
+cache headers even if they are already set:
 
 .. code-block:: yaml
 
@@ -27,7 +27,7 @@ cache headers even if they are already set.
                             public: false
                             max_age: 0
                             s_maxage: 0
-                        last_modified: "-1 hour"
+                        etag: true
                         vary: [Accept-Encoding, Accept-Language]
 
                 # match all actions of a specific controller
@@ -50,7 +50,7 @@ cache headers even if they are already set.
                             public: true
                             max_age: 64000
                             s_maxage: 64000
-                        last_modified: "-1 hour"
+                        etag: true
                         vary: [Accept-Encoding, Accept-Language]
 
                 # match everything to set defaults
@@ -62,7 +62,7 @@ cache headers even if they are already set.
                             public: true
                             max_age: 15
                             s_maxage: 30
-                        last_modified: "-1 hour"
+                        etag: true
 
 ``rules``
 ---------
@@ -144,6 +144,7 @@ You can use the standard cache control directives:
 * ``private`` true or false;
 * ``public`` true or false;
 * ``no_cache`` true or false (use exclusively to support HTTP 1.0);
+* ``no_store``: true or false.
 
 .. code-block:: yaml
 
@@ -166,23 +167,24 @@ default. If you want it respected, add your own logic to ``vcl_fetch``.
 
 .. note::
 
-    The cache-control headers are described in detail in :rfc:`2616#section-14.9`.
+    The cache-control headers are described in detail in :rfc:`2616#section-14.9`
+    and further clarified in :rfc:`7234#section-5.2`.
 
 Extra Cache Control Directives
 """"""""""""""""""""""""""""""
 
 You can also set headers that Symfony considers non-standard, some coming from
-RFCs extending HTTP/1.1. The following options are supported:
+RFCs extending :rfc:`2616` HTTP/1.1. The following options are supported:
 
-* ``must_revalidate`` (:rfc:`2616#section-14.9`)
-* ``proxy_revalidate`` (:rfc:`2616#section-14.9`)
-* ``no_transform`` (:rfc:`2616#section-14.9`)
-* ``stale_if_error``: seconds (:rfc:`5861`)
-* ``stale_while_revalidate``: seconds (:rfc:`5861`)
+* ``must_revalidate`` (:rfc:`7234#section-5.2.2.1`)
+* ``proxy_revalidate`` (:rfc:`7234#section-5.2.2.7`)
+* ``no_transform`` (:rfc:`7234#section-5.2.2.4`)
+* ``stale_if_error``: seconds (:rfc:`5861#section-4`)
+* ``stale_while_revalidate``: seconds (:rfc:`5861#section-3`)
 
 The *stale* directives need a parameter specifying the time in seconds how long
 a  cache is allowed to continue serving stale content if needed. The other
-directives are flags that are included when set to true.
+directives are flags that are included when set to true:
 
 .. code-block:: yaml
 
@@ -200,13 +202,46 @@ directives are flags that are included when set to true.
                             proxy_revalidate: true
                             no_transform: true
 
+``etag``
+""""""""
+
+**type**: ``boolean``
+
+This enables a simplistic ETag calculated as md5 hash of the response body:
+
+.. code-block:: yaml
+
+    # app/config/config.yml
+    fos_http_cache:
+        cache_control:
+            rules:
+                -
+                    headers:
+                        etag: true
+
+.. tip::
+
+    This simplistic ETag handler will not help you to prevent unnecessary work
+    on your web server, but allows a caching proxy to use the ETag cache
+    validation method to preserve bandwidth. The presence of an ETag tells
+    clients that they can send a ``If-None-Match`` header with the ETag their
+    current version of the content has. If the caching proxy still has the same
+    ETag, it responds with a "304 Not Modified" status.
+
+    You can get additional performance if you write your own ETag handler that
+    can read an ETag from your content and decide very early in the request
+    whether the ETag changed or not. It can then terminate the request early
+    with an empty "304 Not Modified" response. This avoids rendering the whole
+    page. If the page depends on permissions, make sure to make the ETag differ
+    based on those permissions (e.g. by appending the :doc:`user context hash </features/user-context>`).
+
 ``last_modified``
 """""""""""""""""
 
 **type**: ``string``
 
 The input to the ``last_modified`` is used for the ``Last-Modified`` header.
-This value must be a valid input to ``DateTime``.
+This value must be a valid input to ``DateTime``:
 
 .. code-block:: yaml
 
@@ -218,11 +253,27 @@ This value must be a valid input to ``DateTime``.
                     headers:
                         last_modified: "-1 hour"
 
-.. hint::
+.. note::
 
     Setting an arbitrary last modified time allows clients to send
     ``If-Modified-Since`` requests. Varnish can handle these to serve data
     from the cache if it was not invalidated since the client requested it.
+
+    Note that the default system will generate an arbitrary last modified date.
+    You can get additional performance if you write your own last modified
+    handler that can compare this date with information about the content of
+    your page and decide early in the request whether anything changed. It can
+    then terminate the request early with an empty "304 Not Modified" response.
+    Using content meta data increases the probability for a 304 response and
+    avoids rendering the whole page.
+
+    See also :rfc:`7232#section-2.2.1` for further consideration on how to
+    generate the last modified date.
+
+.. note::
+
+    You may configure both ETag and last modified on the same response. See
+    :rfc:`7232#section-2.4` for more details.
 
 ``vary``
 """"""""
@@ -231,7 +282,7 @@ This value must be a valid input to ``DateTime``.
 
 You can set the `vary` option to an array that defines the contents of the
 `Vary` header when matching the request. This adds to existing Vary headers,
-keeping previously set Vary options.
+keeping previously set Vary options:
 
 .. code-block:: yaml
 
@@ -248,24 +299,19 @@ keeping previously set Vary options.
 
 **type**: ``integer``
 
-Set a X-Reverse-Proxy-TTL header for reverse proxy time-outs not driven by ``s-maxage``.
+Set a X-Reverse-Proxy-TTL header for reverse proxy time-outs not driven by
+``s-maxage``. This keeps your ``s-maxage`` free for use with reverse proxies
+not under your control.
 
-By default, reverse proxies use the ``s-maxage`` of your ``Cache-Control`` header
-to know how long it should cache a page. But by default, the ``s-maxage`` is also
-sent to the client. Any caches on the Internet, for example at an Internet
-provider or in the office of a surfer, might look at ``s-maxage`` and
-cache the page if it is ``public``. This can be a problem, notably when you do
-:doc:`explicit cache invalidation </reference/cache-manager>`. You might want your reverse
-proxy to keep a page in cache for a long time, but outside caches should not
-keep the page for a long duration.
+.. warning::
 
-One option could be to set a high ``s-maxage`` for the proxy and simply rewrite
-the response to remove or reduce the ``s-maxage``. This is not a good solution
-however, as you start to duplicate your caching rule definitions.
+    This is a custom header. You need to set up your caching proxy to respect
+    this header. See the FOSHttpCache documentation
+    :ref:`for Varnish <foshttpcache:varnish configuration>` or
+    :ref:`for the Symfony HttpCache <foshttpcache:symfony httpcache configuration>`.
 
-This bundle helps you to build a better solution: You can specify the option
-``reverse_proxy_ttl`` in the headers section to get a special header that you can
-then use on the reverse proxy:
+To use the custom TTL, specify the option ``reverse_proxy_ttl`` in the headers
+section:
 
 .. code-block:: yaml
 
@@ -281,22 +327,3 @@ then use on the reverse proxy:
                             s_maxage: 60
 
 This example adds the header ``X-Reverse-Proxy-TTL: 3600`` to your responses.
-Varnish by default knows nothing about this header. To make this solution work,
-you need to extend your varnish ``vcl_fetch`` configuration:
-
-.. code-block:: c
-
-    sub vcl_fetch {
-        if (beresp.http.X-Reverse-Proxy-TTL) {
-            C{
-                char *ttl;
-                ttl = VRT_GetHdr(sp, HDR_BERESP, "\024X-Reverse-Proxy-TTL:");
-                VRT_l_beresp_ttl(sp, atoi(ttl));
-            }C
-            unset beresp.http.X-Reverse-Proxy-TTL;
-        }
-    }
-
-Note that there is a ``beresp.ttl`` field in VCL but unfortunately it can only
-be set to absolute values and not dynamically. Thus we have to revert to a C
-code fragment.
