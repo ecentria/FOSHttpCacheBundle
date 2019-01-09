@@ -210,4 +210,16 @@ class CacheControlSubscriber  extends AbstractRuleSubscriber  implements EventSu
             }
         }
     }
+
+    /**
+     * Decide whether to even look for matching rules with the current request.
+     *
+     * @param Request $request
+     *
+     * @return bool True if the request is safe and headers can be set.
+     */
+    protected function isRequestSafe(Request $request)
+    {
+        return $request->isMethodSafe();
+    }
 }
